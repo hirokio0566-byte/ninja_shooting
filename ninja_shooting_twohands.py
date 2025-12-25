@@ -13,7 +13,7 @@ JUTSU_LABELS = ["fire", "water", "wind", "earth", "lightning"]
 MODEL_PATH = "models/jutsu_svm_twohands.pkl"
 ASSET_DIR = "assets"
 
-BOTTOM_EFFECT_DURATION = 0.4
+BOTTOM_EFFECT_DURATION = 0.8
 
 BULLET_SCALE = 0.1
 ENEMY_SCALE = 0.1
@@ -63,7 +63,7 @@ FRAME_Y_MARGIN = 0
 FRAME_ANCHOR = "bottom"
 
 TIME_LIMIT_SEC = 60
-TARGET_SCORE = 15
+TARGET_SCORE = 18
 
 # ★追加: 画面画像（assets に置く）
 START_BG_PATH = os.path.join(ASSET_DIR, "start.png")
@@ -71,7 +71,7 @@ CLEAR_BG_PATH = os.path.join(ASSET_DIR, "clear.jpg")
 GAMEOVER_BG_PATH = os.path.join(ASSET_DIR, "game_over.jpg")
 
 # ★追加: 難易度切り替え（時間で3段階）
-EASY_SEC = 20
+EASY_SEC = 10
 HARD_SEC = 20  # 最後の20秒
 # Normal は真ん中の 60 - EASY - HARD 秒
 
@@ -85,6 +85,17 @@ EASY_SPEED_RANGE = (1.0, 2.0)   # 落下遅め
 
 HARD_SPAWN_INTERVAL = 1.8       # 出現間隔短め = 敵多め
 HARD_SPEED_RANGE = (2.5, 4.5)   # 落下速め
+
+
+# ----------------- ★追加: ダメージ（通過）関連の設定 ----------------- #
+
+MISS_LIMIT = 3  # ★ここを 5 にすると「5体通過でGame Over」に変更できる
+
+DAMAGE_FLASH_DURATION = 0.18   # 赤フラッシュの持続秒
+DAMAGE_FLASH_ALPHA = 0.45      # 赤フラッシュの濃さ（0~1）
+
+SCREEN_SHAKE_DURATION = 0.22   # 画面揺れの持続秒
+SCREEN_SHAKE_INTENSITY = 14    # 揺れの強さ（ピクセル）
 
 
 # ----------------- 共通ユーティリティ ----------------- #
@@ -219,6 +230,26 @@ def fit_bg_to_frame(bg_img, frame_w, frame_h):
     return cv2.resize(bg_img, (frame_w, frame_h), interpolation=cv2.INTER_AREA)
 
 
+# ----------------- ★追加: 赤フラッシュ / 画面揺れユーティリティ ----------------- #
+
+def apply_red_flash(frame, alpha=0.45):
+    """画面全体に赤フラッシュをかける（BGR）"""
+    overlay = np.zeros_like(frame, dtype=np.uint8)
+    overlay[:, :] = (0, 0, 255)  # Red in BGR
+    out = cv2.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0)
+    return out
+
+
+def apply_screen_shake(frame, intensity=14):
+    """画面をランダムに平行移動して揺らす"""
+    h, w = frame.shape[:2]
+    dx = random.randint(-intensity, intensity)
+    dy = random.randint(-intensity, intensity)
+    M = np.float32([[1, 0, dx], [0, 1, dy]])
+    shaken = cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REFLECT101)
+    return shaken
+
+
 def show_image_screen(bg_path, title_text, window_name):
     """
     画像背景の画面を表示（start/clear/gameover用）
@@ -226,22 +257,24 @@ def show_image_screen(bg_path, title_text, window_name):
     - Q/ESC で抜ける
     - Start画面の場合は SPACE/ENTER でも開始できるように main から使う
     """
-    # 先に一度だけ適当なサイズで読み込み（表示ループでウィンドウに合わせる）
     bg = load_bg_image(bg_path)
 
     while True:
-        # ウィンドウサイズ取得のためのダミー（OpenCVは直接取得しにくいので固定で出す）
-        # 実運用ではカメラ起動後の frame サイズで合わせるのが一番確実。
         canvas = np.zeros((480, 640, 3), dtype=np.uint8)
 
         if bg is not None:
             canvas = fit_bg_to_frame(bg, 640, 480)
 
+        # ★タイトルはあれば表示（画像の「後」に描くので前に出る）
         if title_text:
-            cv2.putText(canvas, title_text, (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
-            cv2.putText(canvas, "Press SPACE/ENTER to start, Q/ESC to quit", (20, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0,0), 2)
+            cv2.putText(canvas, title_text, (20, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.05, (0, 255, 0), 3)
+
+        # ★案内は常に表示
+        cv2.putText(canvas, "Press SPACE/ENTER to start", (20, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.putText(canvas, "Press Q/ESC to quit", (20, 145),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
         cv2.imshow(window_name, canvas)
         key = cv2.waitKey(30) & 0xFF
@@ -273,10 +306,13 @@ def show_clear_screen(window_name="Ninja Shooting Game (Two Hands)"):
         canvas = np.zeros((480, 640, 3), dtype=np.uint8)
         if bg is not None:
             canvas = fit_bg_to_frame(bg, 640, 480)
-        else:
-            cv2.putText(canvas, "CLEAR!", (200, 220), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 255, 0), 4)
 
-        cv2.putText(canvas, "Press Q or ESC", (200, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        # ★文字を常に描画（背景の有無に関係なく前に出る）
+        cv2.putText(canvas, "CLEAR!", (180, 220),
+                    cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 255, 0), 4)
+        cv2.putText(canvas, "Press Q or ESC", (190, 450),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
         cv2.imshow(window_name, canvas)
         key = cv2.waitKey(30) & 0xFF
         if key in [27, ord('q')]:
@@ -289,10 +325,13 @@ def show_game_over_screen(window_name="Ninja Shooting Game (Two Hands)"):
         canvas = np.zeros((480, 640, 3), dtype=np.uint8)
         if bg is not None:
             canvas = fit_bg_to_frame(bg, 640, 480)
-        else:
-            cv2.putText(canvas, "GAME OVER", (120, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 0, 255), 4)
 
-        cv2.putText(canvas, "Press Q or ESC", (200, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        # ★文字を常に描画（背景の有無に関係なく前に出る）
+        cv2.putText(canvas, "GAME OVER", (110, 220),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 0, 255), 4)
+        cv2.putText(canvas, "Press Q or ESC", (190, 450),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
         cv2.imshow(window_name, canvas)
         key = cv2.waitKey(30) & 0xFF
         if key in [27, ord('q')]:
@@ -414,8 +453,12 @@ def activate_jutsu(jutsu_label, hand_pos, projectiles, projectile_images):
 def main():
     window_name = "Ninja Shooting Game (Two Hands)"
 
-    # ★Start画面
-    start_result = show_image_screen(START_BG_PATH, title_text="", window_name=window_name)
+    # ★Start画面（タイトル＆案内文が背景の前に出る）
+    start_result = show_image_screen(
+        START_BG_PATH,
+        title_text="Ninja Shooting Game (Two Hands)",
+        window_name=window_name
+    )
     if start_result == "quit":
         cv2.destroyAllWindows()
         return
@@ -434,6 +477,9 @@ def main():
     last_spawn_time = time.time()
     score = 0
 
+    # ★追加: 敵通過（ダメージ）カウント
+    miss_count = 0
+
     hold_label = None
     hold_start_time = 0.0
     last_seen_time = 0.0
@@ -448,6 +494,10 @@ def main():
     bottom_effect_label = None
 
     game_start_time = time.time()
+
+    # ★追加: ダメージ演出の状態
+    damage_flash_until = 0.0
+    shake_until = 0.0
 
     with mp_hands.Hands(
         static_image_mode=False,
@@ -555,8 +605,26 @@ def main():
             for proj in projectiles:
                 proj.update()
 
-            enemies = [e for e in enemies if e.y < h + 100]
+            # ★追加: 画面下に抜けた敵（通過）をカウントして消す
+            remaining_enemies_pass = []
+            for e in enemies:
+                if e.y >= h + 50:
+                    miss_count += 1
+
+                    # ★追加: ダメージ演出（赤フラッシュ＆揺れ）を発火
+                    damage_flash_until = max(damage_flash_until, now + DAMAGE_FLASH_DURATION)
+                    shake_until = max(shake_until, now + SCREEN_SHAKE_DURATION)
+                else:
+                    remaining_enemies_pass.append(e)
+            enemies = remaining_enemies_pass
+
+            # 弾は従来通り
             projectiles = [p for p in projectiles if p.y > -100]
+
+            # ★追加: 一定数通過で即ゲームオーバー
+            if miss_count >= MISS_LIMIT:
+                show_game_over_screen(window_name=window_name)
+                break
 
             # ----- 当たり判定 ----- #
             remaining_enemies = []
@@ -633,9 +701,21 @@ def main():
             cv2.putText(frame, f"Difficulty: {diff_name}", (250, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
+            # ★追加: Miss 表示（通過した数）
+            cv2.putText(frame, f"Miss: {miss_count}/{MISS_LIMIT}", (250, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
             if current_jutsu:
                 cv2.putText(frame, f"Jutsu: {current_jutsu}", (250, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
+            # ----------------- ★追加: 画面揺れ＆赤フラッシュ（最後に適用） ----------------- #
+            if now < shake_until:
+                frame = apply_screen_shake(frame, intensity=SCREEN_SHAKE_INTENSITY)
+
+            if now < damage_flash_until:
+                frame = apply_red_flash(frame, alpha=DAMAGE_FLASH_ALPHA)
+            # -------------------------------------------------------------------------- #
 
             cv2.imshow(window_name, frame)
 
