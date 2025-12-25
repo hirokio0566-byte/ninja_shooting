@@ -9,7 +9,7 @@ DATASET_PATH = "dataset_twohands.npz"
 MODEL_SAVE_PATH = "models/jutsu_svm_twohands.pkl"
 
 # ここを変えるだけで術を拡張できる
-JUTSU_LABELS = ["fire", "water", "wind"]
+JUTSU_LABELS = ["fire", "water", "wind", "earth", "lightning"]
 
 
 def main():

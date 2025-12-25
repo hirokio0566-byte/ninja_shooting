@@ -6,7 +6,7 @@ import os
 SAVE_PATH = "dataset_twohands.npz"
 
 # ラベル（ここを書き換えるだけで拡張可能）
-JUTSU_LABELS = ["fire", "water", "wind"]
+JUTSU_LABELS = ["fire", "water", "wind", "earth", "lightning"]
 LABEL_TO_ID = {label: i for i, label in enumerate(JUTSU_LABELS)}
 
 mp_hands = mp.solutions.hands
